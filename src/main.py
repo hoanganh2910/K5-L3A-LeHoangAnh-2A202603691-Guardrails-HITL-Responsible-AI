@@ -13,7 +13,8 @@ File JSON luôn ghi vào ``<repo>/outputs/`` (không phụ thuộc thư mục hi
 Tham khảo (không chấm, không có CLI): ``src/testing/``, ``src/hitl/``.
 """
 from __future__ import annotations
-
+import os 
+from dotenv import load_dotenv
 import argparse
 import asyncio
 import sys
@@ -134,10 +135,11 @@ async def part4_attacks():
 
 
 async def main(parts=None):
-    setup_api_key()
-
     if parts is None:
         parts = [2, 3, 4]  # Core: CP2 → CP3 → CP4
+
+    # CP2–CP3 use only Blue/OpenRouter. Red credentials are needed for CP4.
+    setup_api_key(include_red=4 in parts)
 
     for part in parts:
         if part == 2:

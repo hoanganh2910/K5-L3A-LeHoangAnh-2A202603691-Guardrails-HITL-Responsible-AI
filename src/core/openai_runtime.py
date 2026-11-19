@@ -9,6 +9,8 @@ Gemini Red Team dùng Google ADK trong agents/*.py — không đi qua file này.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import asyncio
+import time
 from typing import Any, Callable
 
 from core.config import (
@@ -51,25 +53,84 @@ class OpenAIRunner:
 
         return OpenAI(**(self.client_kwargs or {}))
 
-    async def chat(self, agent: OpenAIAgent, user_message: str) -> str:
+    @staticmethod
+    def _openrouter_retry_delay(error) -> tuple[float | None, str | None]:
+        """Read OpenRouter's reset/retry hints without exposing request data."""
+        response = getattr(error, "response", None)
+        headers = getattr(response, "headers", {}) or {}
+        body = getattr(error, "body", None)
+        if not isinstance(body, dict):
+            body = {}
+        metadata = body.get("metadata") or (body.get("error") or {}).get("metadata") or {}
+        source = metadata.get("limit_source")
+
+        delay = metadata.get("retry_after_seconds")
+        if delay is None:
+            delay = headers.get("retry-after") or headers.get("Retry-After")
+        if delay is not None:
+            try:
+                return max(0.0, float(delay)), source
+            except (TypeError, ValueError):
+                pass
+
+        reset = (
+            headers.get("x-ratelimit-reset")
+            or headers.get("X-RateLimit-Reset")
+            or (metadata.get("headers") or {}).get("X-RateLimit-Reset")
+        )
+        if reset is not None:
+            try:
+                reset_time = float(reset)
+                if reset_time > 1_000_000_000_000:
+                    reset_time /= 1000.0  # OpenRouter may send Unix milliseconds.
+                return max(0.0, reset_time - time.time()), source
+            except (TypeError, ValueError):
+                pass
+        return None, source
+
+    async def chat(
+        self, agent: OpenAIAgent, user_message: str, *, user_id: str = "student"
+    ) -> str:
         for hook in self.input_hooks:
             blocked = hook(user_message)
             if blocked:
                 return blocked
 
-        block_msg = await self._run_input_plugins(user_message)
+        block_msg = await self._run_input_plugins(user_message, user_id=user_id)
         if block_msg is not None:
             return block_msg
 
         client = self._client()
-        completion = client.chat.completions.create(
-            model=self.model,
-            messages=[
+        request = {
+            "model": self.model,
+            "messages": [
                 {"role": "system", "content": agent.instruction},
                 {"role": "user", "content": user_message},
             ],
-            temperature=self.temperature,
-        )
+            "temperature": self.temperature,
+        }
+        try:
+            completion = client.chat.completions.create(**request)
+        except Exception as error:
+            from openai import RateLimitError
+
+            if self.provider != "openrouter" or not isinstance(error, RateLimitError):
+                raise
+            delay, source = self._openrouter_retry_delay(error)
+            if source == "openrouter_free_tier_per_minute" and delay is None:
+                raise RuntimeError(
+                    "OpenRouter free-model rate limit reached; check the reset time "
+                    "in OpenRouter Activity before retrying."
+                ) from error
+            if delay is None:
+                delay = 2.0  # A brief retry for transient upstream pool saturation.
+            if delay > 120:
+                raise RuntimeError(
+                    f"OpenRouter rate limit ({source or 'provider'}); retry after "
+                    f"about {delay:.0f} seconds."
+                ) from error
+            await asyncio.sleep(delay)
+            completion = client.chat.completions.create(**request)
         text = (completion.choices[0].message.content or "").strip()
 
         for hook in self.output_hooks:
@@ -78,7 +139,9 @@ class OpenAIRunner:
         text = await self._run_output_plugins(text)
         return text
 
-    async def _run_input_plugins(self, user_message: str) -> str | None:
+    async def _run_input_plugins(
+        self, user_message: str, *, user_id: str = "student"
+    ) -> str | None:
         if not self.plugins:
             return None
         try:
@@ -90,7 +153,7 @@ class OpenAIRunner:
             role="user",
             parts=[types.Part.from_text(text=user_message)],
         )
-        ctx = _MockInvocationContext()
+        ctx = _MockInvocationContext(user_id=user_id)
         for plugin in self.plugins:
             cb = getattr(plugin, "on_user_message_callback", None)
             if cb is None:

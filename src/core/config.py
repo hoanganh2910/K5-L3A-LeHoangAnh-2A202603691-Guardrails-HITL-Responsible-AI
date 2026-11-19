@@ -119,6 +119,9 @@ def blue_client_kwargs() -> dict:
     """OpenAI SDK kwargs pointing at OpenRouter (Blue Team only)."""
     return {
         "api_key": get_openrouter_api_key() or None,
+        # OpenAIRunner handles OpenRouter 429s using reset metadata instead of
+        # the SDK's short blind retries, which can all land in the same window.
+        "max_retries": 0,
         "base_url": (
             os.environ.get("OPENROUTER_BASE_URL", OPENROUTER_BASE_URL).strip()
             or OPENROUTER_BASE_URL
@@ -260,13 +263,16 @@ def is_harder_model() -> bool:
     return any(x in m for x in ("gpt-5.6", "pro", "gemini-3.8", "gemini-3.7"))
 
 
-def setup_api_key():
-    """Ensure keys for Blue (OpenRouter) and the selected Red provider."""
+def setup_api_key(*, include_red: bool = True):
+    """Ensure Blue credentials and, when needed, selected Red credentials."""
     if not get_openrouter_api_key():
         os.environ["OPENROUTER_API_KEY"] = input(
             "Enter OpenRouter API Key (Blue): "
         ).strip()
     print(f"Blue  — {blue_provider_label()}  [LOCKED]")
+
+    if not include_red:
+        return
 
     red = get_red_provider()
     model = get_red_model()
