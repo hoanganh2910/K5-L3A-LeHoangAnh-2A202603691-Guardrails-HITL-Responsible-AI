@@ -5,7 +5,7 @@ Checkpoint 2 — Output Guardrails
   - LLM-as-Judge                          ← optional (không chấm)
 """
 import re
-import textwrap
+from collections import Counter
 
 from google.genai import types
 from google.adk.agents import llm_agent
@@ -13,6 +13,7 @@ from google.adk import runners
 from google.adk.plugins import base_plugin
 
 from core.utils import chat_with_agent
+from core.config import load_protected_payload
 
 
 # ============================================================
@@ -39,21 +40,71 @@ def content_filter(response: str) -> dict:
     issues = []
     redacted = response
 
-    # PII patterns to check
-    PII_PATTERNS = {
-        # TODO: Add regex patterns for:
-        # - VN phone number: r"0\d{9,10}"
-        # - Email: r"[\w.-]+@[\w.-]+\.[a-zA-Z]{2,}"
-        # - National ID (CMND/CCCD): r"\b\d{9}\b|\b\d{12}\b"
-        # - API key pattern: r"sk-[a-zA-Z0-9-]+"
-        # - Password pattern: r"password\s*[:=]\s*\S+"
+    patterns = {
+        # VN subscriber numbers; the public 1900 hotline does not match this form.
+        "phone": r"(?<!\d)(?:\+?84|0)(?:[\s().-]*\d){8,10}(?!\d)",
+        "email": r"\b[\w.%+-]+@[\w.-]+\.[a-zA-Z]{2,}\b",
+        "national_id": r"(?<!\d)(?:\d{9}|\d{12})(?!\d)",
+        "api_key": r"\bsk-[a-zA-Z0-9][a-zA-Z0-9_-]*\b",
+        "password": r"\b(?:password|passcode|mật\s*khẩu)\s*(?:(?:[:=]|\bis\b)\s*)\S+",
     }
 
-    for name, pattern in PII_PATTERNS.items():
-        matches = re.findall(pattern, response, re.IGNORECASE)
-        if matches:
-            issues.append(f"{name}: {len(matches)} found")
-            redacted = re.sub(pattern, "[REDACTED]", redacted, flags=re.IGNORECASE)
+    # Also protect exact values configured for this lab (admin password, API
+    # key and DB host), including a secret mentioned without a label.
+    try:
+        secret_values = load_protected_payload().get("secrets", {})
+    except (OSError, ValueError, TypeError):
+        secret_values = {}
+    secret_issue = {
+        "admin_password": "password",
+        "api_key": "api_key",
+        "db_host": "database_host",
+    }
+    for key, value in secret_values.items():
+        value = str(value or "").strip()
+        if value:
+            issue_type = secret_issue.get(key, "secret")
+            pattern = rf"(?<![\w]){re.escape(value)}(?![\w])"
+            patterns[f"{issue_type}_secret"] = pattern
+
+    matches_by_type: dict[str, list[tuple[int, int]]] = {}
+    replacement_spans: list[tuple[int, int]] = []
+    for pattern_name, pattern in patterns.items():
+        matches = list(re.finditer(pattern, response, re.IGNORECASE))
+        if not matches:
+            continue
+        # Merge aliases (e.g. a configured API key also matches the sk- rule).
+        issue_type = pattern_name.removesuffix("_secret")
+        matches_by_type.setdefault(issue_type, []).extend(
+            (match.start(), match.end()) for match in matches
+        )
+        replacement_spans.extend((match.start(), match.end()) for match in matches)
+
+    issue_counts: Counter[str] = Counter()
+    for issue_type, spans in matches_by_type.items():
+        unique_spans: list[tuple[int, int]] = []
+        for start, end in sorted(spans):
+            if unique_spans and start <= unique_spans[-1][1]:
+                unique_spans[-1] = (
+                    unique_spans[-1][0], max(unique_spans[-1][1], end)
+                )
+            else:
+                unique_spans.append((start, end))
+        issue_counts[issue_type] = len(unique_spans)
+
+    # Replace original-text spans from right to left to preserve indices.
+    merged_spans: list[tuple[int, int]] = []
+    for start, end in sorted(replacement_spans):
+        if merged_spans and start <= merged_spans[-1][1]:
+            merged_spans[-1] = (
+                merged_spans[-1][0], max(merged_spans[-1][1], end)
+            )
+        else:
+            merged_spans.append((start, end))
+    for start, end in reversed(merged_spans):
+        redacted = redacted[:start] + "[REDACTED]" + redacted[end:]
+
+    issues = [f"{name}: {count} found" for name, count in sorted(issue_counts.items())]
 
     return {
         "safe": len(issues) == 0,
@@ -172,16 +223,29 @@ class OutputGuardrailPlugin(base_plugin.BasePlugin):
         if not response_text:
             return llm_response
 
-        # TODO: Implement logic:
-        # 1. Call content_filter(response_text)
-        #    - If issues found: replace llm_response.content with redacted version
-        #    - Increment self.redacted_count
-        # 2. If use_llm_judge: call llm_safety_check(response_text)
-        #    - If unsafe: replace llm_response.content with a safe message
-        #    - Increment self.blocked_count
-        # 3. Return llm_response (possibly modified)
+        filtered = content_filter(response_text)
+        safe_text = filtered["redacted"]
+        if not filtered["safe"]:
+            llm_response.content = types.Content(
+                role="model", parts=[types.Part.from_text(text=safe_text)]
+            )
+            self.redacted_count += 1
 
-        return llm_response  # TODO: modify if needed
+        # Judge the already-redacted text so raw PII/secrets are not sent to
+        # an additional model endpoint. Judge is optional in Checkpoint 2.
+        if self.use_llm_judge:
+            judge_result = await llm_safety_check(safe_text)
+            if not judge_result["safe"]:
+                llm_response.content = types.Content(
+                    role="model",
+                    parts=[types.Part.from_text(
+                        text="Xin lỗi, tôi không thể cung cấp câu trả lời này. "
+                        "Vui lòng liên hệ bộ phận hỗ trợ VinBank."
+                    )],
+                )
+                self.blocked_count += 1
+
+        return llm_response
 
 
 # ============================================================
