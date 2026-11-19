@@ -16,8 +16,8 @@ NeMo chạy ở chế độ "chỉ rails" qua ``LLMRails.check_async`` (input ra
 output rails). LLM chính của Red Advance vẫn do runner OpenAI / Google ADK gọi.
 
 Self-check dùng chính model Red trong ``.env`` qua engine ``openai`` (mặc định
-của NeMo ≥ 0.22, không cần LangChain). Gemini đi qua endpoint tương thích OpenAI
-của Google AI Studio, cùng ``GOOGLE_API_KEY``.
+của NeMo ≥ 0.22, không cần LangChain). Gemini và DeepSeek dùng endpoint tương
+thích OpenAI với key của provider tương ứng.
 
 Fail-closed: NeMo lỗi (mất mạng, sai key, hết quota…) thì request bị chặn.
 
@@ -37,6 +37,8 @@ from agents.security_boundary import contains_secret, normalize_for_security
 from core.config import (
     DEMO_SECRETS,
     PROVIDER_GEMINI,
+    PROVIDER_DEEPSEEK,
+    DEEPSEEK_BASE_URL,
     get_red_model,
     get_red_provider,
 )
@@ -237,6 +239,16 @@ def _model_entry(provider: str, model: str) -> dict:
             "api_key_env_var": "GOOGLE_API_KEY",
             "parameters": {"base_url": GEMINI_OPENAI_BASE_URL},
         }
+    if provider == PROVIDER_DEEPSEEK:
+        return {
+            "type": "main",
+            "engine": "openai",
+            "model": model,
+            "api_key_env_var": "DEEPSEEK_API_KEY",
+            "parameters": {
+                "base_url": os.environ.get("DEEPSEEK_BASE_URL", DEEPSEEK_BASE_URL)
+            },
+        }
     return {
         "type": "main",
         "engine": "openai",
@@ -290,7 +302,8 @@ def build_rails_config(
         if "environment variable" in str(exc):
             raise RuntimeError(
                 "NeMo Guardrails của Red Advance cần API key Red trong môi trường "
-                "(OPENAI_API_KEY hoặc GOOGLE_API_KEY). Kiểm tra file .env."
+                "(OPENAI_API_KEY, GOOGLE_API_KEY hoặc DEEPSEEK_API_KEY). "
+                "Kiểm tra file .env."
             ) from exc
         raise
 

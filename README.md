@@ -24,7 +24,7 @@
 2. Tài khoản GitHub cá nhân (để fork + đổi tên repo nộp).
 3. API keys:
    - **Blue (bắt buộc):** [OpenRouter](https://openrouter.ai/keys) — model cố định [`liquid/lfm-3-1.7b:free`](https://openrouter.ai/liquid/lfm-3-1.7b:free)
-   - **Red (chọn một provider):** [OpenAI](https://platform.openai.com/api-keys) (`gpt-4o-mini`) **hoặc** [Google AI Studio](https://aistudio.google.com/apikey) (`gemini-3.5-flash`)
+   - **Red:** DeepSeek (`deepseek-flash`) hoặc OpenAI (`gpt-4o-mini`) / Gemini (`gemini-3.5-flash`). DeepSeek dùng API tương thích OpenAI tại `https://api.deepseek.com` ([tài liệu](https://api-docs.deepseek.com/quick_start/agent_integrations/)).
 4. Đọc nhanh [`RULES.md`](RULES.md) và [`RUBRIC.md`](RUBRIC.md).
 
 ### Hai vai bạn sẽ đóng
@@ -57,7 +57,7 @@ Bonus lab chỉ tính **một** trong hai: leak **Red** (B1, tối đa +5) hoặ
 | Agent                     | Provider / model                                                                     |
 | ------------------------- | ------------------------------------------------------------------------------------ |
 | **Blue**                  | OpenRouter `liquid/lfm-3-1.7b:free` (khóa cứng)                                         |
-| **Red** + **Red Advance** | Cùng provider: `gpt-4o-mini` **hoặc** `gemini-3.5-flash` (model mềm — điểm bắt buộc) |
+| **Red** + **Red Advance** | Cùng provider: DeepSeek `deepseek-flash`, OpenAI `gpt-4o-mini` hoặc Gemini `gemini-3.5-flash` |
 | Model khó (tuỳ chọn)      | `gpt-5.6-luna` / `gemini-3.8-flash` — **không** phải tên agent                       |
 
 ---
@@ -117,7 +117,7 @@ User → L1 Regex input → L2 NeMo input rails → LLM → L3 Regex output → 
 ```
 
 - Code: `src/agents/guards_agent.py` (`RedAdvanceGuardPlugin`) + `src/agents/red_advance_nemo.py` (Colang, prompt self-check, custom action).
-- NeMo self-check gọi **cùng model / key Red** trong `.env` (Gemini qua endpoint OpenAI-compatible) → mỗi prompt lọt qua regex tốn thêm tối đa 2 lượt gọi API.
+- NeMo self-check gọi **cùng model / key Red** trong `.env` (Gemini và DeepSeek qua endpoint OpenAI-compatible) → mỗi prompt lọt qua regex tốn thêm tối đa 2 lượt gọi API.
 - NeMo lỗi (sai key, mất mạng, hết quota) → **chặn** (fail-closed). Trong JSON: `layer` = `nemo_input_rail` / `nemo_output_rail` / `nemo_error`.
 
 ---
@@ -158,7 +158,7 @@ cp .env.example .env
 pip install -r requirements.txt
 ```
 
-Điền `.env`: `OPENROUTER_API_KEY` + `RED_TEAM_PROVIDER=openai|gemini` (và key tương ứng).  
+Điền `.env`: `OPENROUTER_API_KEY` + `RED_TEAM_PROVIDER=deepseek` và `DEEPSEEK_API_KEY` (hoặc chọn OpenAI/Gemini cùng key tương ứng).
 Rồi mở [`CHECKPOINTS.md`](CHECKPOINTS.md) và làm lần lượt Checkpoint 1 → 5.
 
 Nộp theo [`SUBMISSION.md`](SUBMISSION.md) · Quy định: [`RULES.md`](RULES.md).

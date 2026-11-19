@@ -13,7 +13,7 @@ Phòng thủ nhiều lớp — regex **và** NVIDIA NeMo Guardrails (bắt buộ
 
 Cấu hình NeMo (Colang, prompt self-check, custom action): ``agents/red_advance_nemo.py``.
 Cả 4 lớp nằm trong ``RedAdvanceGuardPlugin`` — chạy được trên OpenAIRunner
-(RED_TEAM_PROVIDER=openai) lẫn Google ADK (RED_TEAM_PROVIDER=gemini).
+(RED_TEAM_PROVIDER=openai/deepseek) lẫn Google ADK (RED_TEAM_PROVIDER=gemini).
 
 Bonus target B2 (tối đa +10, chọn 1): leak secrets past these guardrails (grader replay).
 Do not weaken these rules for the assignment. Student Blue pipelines in
@@ -328,7 +328,7 @@ class RedAdvanceGuardPlugin(base_plugin.BasePlugin):
             return verdict.message
         return verdict.content or bot_text
 
-    # --- OpenAIRunner (RED_TEAM_PROVIDER=openai) ---
+    # --- OpenAIRunner (RED_TEAM_PROVIDER=openai/deepseek) ---
     async def on_user_message_callback(
         self, *, invocation_context: InvocationContext, user_message: types.Content
     ) -> types.Content | None:
@@ -410,7 +410,7 @@ def create_red_agent_advance():
         return agent, runner
 
     raise RuntimeError(
-        "RED_TEAM_PROVIDER phải là openai hoặc gemini. Xem .env.example."
+        "RED_TEAM_PROVIDER không được hỗ trợ. Xem .env.example."
     )
 
 

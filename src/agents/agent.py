@@ -91,9 +91,7 @@ def create_red_agent_default():
         )
         return agent, runner
 
-    raise RuntimeError(
-        "RED_TEAM_PROVIDER phải là openai hoặc gemini. Xem .env.example."
-    )
+    raise RuntimeError("RED_TEAM_PROVIDER không được hỗ trợ. Xem .env.example.")
 
 
 def create_blue_agent(plugins: list):
